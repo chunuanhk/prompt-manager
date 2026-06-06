@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 
 // 读取目录，构建目录树
 async function readDir(handle, path = '') {
@@ -49,6 +49,13 @@ async function deleteFile(rootHandle, id) {
   await dir.removeEntry(fname)
 }
 
+// 删除文件夹（递归）
+async function deleteDir(rootHandle, path) {
+  const parts = path.split('/'), dirName = parts.pop()
+  const parent = parts.length ? await getSubDir(rootHandle, parts.join('/')) : rootHandle
+  await parent.removeEntry(dirName, { recursive: true })
+}
+
 // 创建子文件夹
 async function createSubDir(rootHandle, path) {
   const parts = path.split('/'), dirName = parts.pop()
@@ -56,21 +63,60 @@ async function createSubDir(rootHandle, path) {
   await parent.getDirectoryHandle(dirName, { create: true })
 }
 
+// 移动文件到目标目录
+async function moveFile(rootHandle, fileId, targetDir) {
+  const parts = fileId.split('/'), fname = parts.pop() + '.json'
+  const srcDir = parts.length ? await getSubDir(rootHandle, parts.join('/')) : rootHandle
+  const dstDir = targetDir ? await getSubDir(rootHandle, targetDir) : rootHandle
+  const fh = await srcDir.getFileHandle(fname)
+  const w = await dstDir.getFileHandle(fname, { create: true }).then(h => h.createWritable())
+  await w.write(await (await fh.getFile()).text()); await w.close()
+  await srcDir.removeEntry(fname)
+}
+
+// 移动文件夹到目标目录
+async function moveFolder(rootHandle, folderPath, targetDir) {
+  const folderName = folderPath.split('/').pop()
+  const dstDir = targetDir ? await getSubDir(rootHandle, targetDir) : rootHandle
+  await dstDir.getDirectoryHandle(folderName, { create: true })
+  const src = await getSubDir(rootHandle, folderPath)
+  const dst = await getSubDir(dstDir, folderName)
+  async function copy(src, dst) {
+    for await (const [name, h] of src) {
+      if (h.kind === 'directory') { const s = await dst.getDirectoryHandle(name, { create: true }); await copy(h, s) }
+      else { const fh = await dst.getFileHandle(name, { create: true }); const w = await fh.createWritable(); await w.write(await (await h.getFile()).text()); await w.close() }
+    }
+  }
+  await copy(src, dst)
+  const parts = folderPath.split('/'), dn = parts.pop()
+  const parent = parts.length ? await getSubDir(rootHandle, parts.join('/')) : rootHandle
+  await parent.removeEntry(dn, { recursive: true })
+}
+
 const safeId = (name) => name.replace(/[^a-zA-Z0-9_\u4e00-\u9fff-]/g, '_') || 'untitled'
 
-// 目录树节点
-function TreeNode({ node, depth, selectedDir, selectedFile, onSelectDir, onSelectFile, openDirs, toggleDir }) {
+// 目录树节点（支持选中切换、拖拽、放置）
+function TreeNode({ node, depth, selectedDir, selectedFile, onSelectDir, onSelectFile, openDirs, toggleDir, onDragStart, onDrop, dragOver }) {
   const isDir = node.kind === 'dir', isOpen = openDirs.has(node.path)
   const sel = isDir ? selectedDir === node.path : selectedFile === node.path
+  const click = () => {
+    if (isDir) { if (selectedDir === node.path) { onSelectDir('') } else { toggleDir(node.path); onSelectDir(node.path) } }
+    else { onSelectFile(node.path) }
+  }
+  const dragStart = (e) => { e.stopPropagation(); onDragStart(node) }
+  const dragOverH = (e) => { e.preventDefault(); e.stopPropagation() }
+  const drop = (e) => { e.preventDefault(); e.stopPropagation(); if (isDir) onDrop(node.path) }
   return <>
-    <div className={`tree-item ${isDir ? `folder${isOpen ? ' open' : ''}` : 'file'}${sel ? ' selected' : ''}`}
+    <div className={`tree-item ${isDir ? `folder${isOpen ? ' open' : ''}` : 'file'}${sel ? ' selected' : ''}${dragOver === node.path ? ' drag-over' : ''}`}
       style={{ paddingLeft: depth * 16 + 12 }}
-      onClick={() => isDir ? (toggleDir(node.path), onSelectDir(node.path)) : onSelectFile(node.path)}>
+      onClick={click} draggable onDragStart={dragStart}
+      {...(isDir ? { onDragOver: dragOverH, onDrop: drop } : {})}>
       {node.name.replace(/\.json$/, '')}
     </div>
     {isDir && isOpen && <div className="tree-children">
       {node.children.map(c => <TreeNode key={c.path} node={c} depth={depth + 1} selectedDir={selectedDir} selectedFile={selectedFile}
-        onSelectDir={onSelectDir} onSelectFile={onSelectFile} openDirs={openDirs} toggleDir={toggleDir} />)}
+        onSelectDir={onSelectDir} onSelectFile={onSelectFile} openDirs={openDirs} toggleDir={toggleDir}
+        onDragStart={onDragStart} onDrop={onDrop} dragOver={dragOver} />)}
     </div>}
   </>
 }
@@ -91,10 +137,7 @@ function TagInput({ tags, onChange }) {
 function PromptView({ prompt, onEdit }) {
   const [lang, setLang] = useState('zh')
   return <div className="prompt-view">
-    <div className="view-header">
-      <h2>{prompt.name}</h2>
-      <button className="btn-primary" onClick={onEdit}>编辑</button>
-    </div>
+    <div className="view-header"><h2>{prompt.name}</h2><button className="btn-primary" onClick={onEdit}>编辑</button></div>
     {(prompt.tags || []).length > 0 && <div className="view-tags">{prompt.tags.map(t => <span key={t} className="tag">{t}</span>)}</div>}
     <div className="lang-tabs">
       <div className={`lang-tab${lang === 'zh' ? ' active' : ''}`} onClick={() => setLang('zh')}>中文版本</div>
@@ -151,6 +194,8 @@ export default function App() {
   const [openDirs, setOpenDirs] = useState(new Set())
   const [editing, setEditing] = useState(false)
   const [showNewFolder, setShowNewFolder] = useState(false)
+  const [dragNode, setDragNode] = useState(null)
+  const [dragOver, setDragOver] = useState(null)
 
   const refresh = useCallback(async () => {
     if (!dirHandle) return
@@ -174,77 +219,122 @@ export default function App() {
     return activeTags.size ? list.filter(p => (p.tags || []).some(t => activeTags.has(t))) : list
   }, [prompts, activeTags])
 
-  // 选中文件
-  const selectFile = (path) => { setSelectedFile(path); setEditing(false) }
-  // 选中目录
-  const selectDir = (path) => setSelectedDir(path)
-
   // 新建提示词（在当前选中目录下）
   const newPrompt = () => {
     const id = (selectedDir ? selectedDir + '/' : '') + `prompt_${Date.now()}`
     setPrompts(p => ({ ...p, [id]: { name: '新提示词', tags: [], zh: '', en: '', note: '' } }))
-    setSelectedFile(id); setEditing(true)
+    setSelectedFile(id); setSelectedDir(''); setEditing(true)
   }
 
-  // 新建文件夹
+  // 新建文件夹（在当前选中目录下）
   const confirmNewFolder = async (name) => {
-    const path = (selectedDir ? selectedDir + '/' : '') + name
-    await createSubDir(dirHandle, path)
-    setShowNewFolder(false)
-    setOpenDirs(s => new Set([...s, selectedDir || '']))
-    refresh()
+    await createSubDir(dirHandle, (selectedDir ? selectedDir + '/' : '') + name)
+    setShowNewFolder(false); setOpenDirs(s => new Set([...s, selectedDir])); refresh()
   }
 
   // 保存提示词
   const savePrompt = async (oldId, data) => {
-    const newId = (oldId.includes('/') ? oldId.split('/').slice(0, -1).join('/') + '/' : '') + safeId(data.name)
-    if (oldId !== newId && prompts[oldId] && !oldId.split('/').pop().startsWith('prompt_')) {
+    const dir = oldId.includes('/') ? oldId.split('/').slice(0, -1).join('/') + '/' : ''
+    const newId = dir + safeId(data.name)
+    if (oldId !== newId && !oldId.split('/').pop().startsWith('prompt_')) {
       try { await deleteFile(dirHandle, oldId) } catch {}
     }
     await writeFile(dirHandle, newId, data)
     setPrompts(p => { const n = { ...p, [newId]: data }; if (oldId !== newId) delete n[oldId]; return n })
-    setSelectedFile(newId); setEditing(false)
-    refresh()
+    setSelectedFile(newId); setEditing(false); refresh()
   }
 
   // 删除提示词
   const removePrompt = async (id) => {
     if (!id.split('/').pop().startsWith('prompt_')) await deleteFile(dirHandle, id).catch(() => {})
     setPrompts(p => { const n = { ...p }; delete n[id]; return n })
-    setSelectedFile(null); setEditing(false)
-    refresh()
+    setSelectedFile(null); setEditing(false); refresh()
   }
 
+  // 删除文件夹
+  const removeDir = async (path) => {
+    if (selectedFile?.startsWith(path + '/') || selectedFile === path) { setSelectedFile(null); setEditing(false) }
+    await deleteDir(dirHandle, path); setSelectedDir(''); refresh()
+  }
+
+  // 拖拽放置处理
+  const handleDrop = async (targetDir) => {
+    setDragOver(null)
+    if (!dragNode || dragNode.path === targetDir) return
+    if (dragNode.path.startsWith(targetDir + '/')) return
+    if (dragNode.kind === 'file') await moveFile(dirHandle, dragNode.path, targetDir)
+    else if (targetDir.startsWith(dragNode.path + '/')) return
+    else await moveFolder(dirHandle, dragNode.path, targetDir)
+    setDragNode(null); setSelectedFile(null); refresh()
+  }
+
+  // 拖到根区域（移到根目录）
+  const handleRootDrop = async (e) => {
+    e.preventDefault(); setDragOver(null)
+    if (!dragNode || !dragNode.path.includes('/')) return
+    if (dragNode.kind === 'file') await moveFile(dirHandle, dragNode.path, '')
+    else await moveFolder(dirHandle, dragNode.path, '')
+    setDragNode(null); setSelectedFile(null); refresh()
+  }
+
+  // 用ref追踪最新状态，供Delete键handler使用
+  const stateRef = useRef({})
+  stateRef.current = { selectedFile, selectedDir, prompts, dirHandle, editing }
+
+  // Delete键删除选中项
+  useEffect(() => {
+    const handler = async (e) => {
+      if (e.key !== 'Delete' || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+      const { selectedFile: sf, selectedDir: sd } = stateRef.current
+      if (sf) {
+        if (!sf.split('/').pop().startsWith('prompt_')) await deleteFile(stateRef.current.dirHandle, sf).catch(() => {})
+        setPrompts(p => { const n = { ...p }; delete n[sf]; return n })
+        setSelectedFile(null); setEditing(false); refresh()
+      } else if (sd) {
+        if (stateRef.current.selectedFile?.startsWith(sd + '/')) { setSelectedFile(null); setEditing(false) }
+        await deleteDir(stateRef.current.dirHandle, sd); setSelectedDir(''); refresh()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [refresh])
+
+  const selectFile = (path) => { setSelectedFile(path === selectedFile ? null : path); setSelectedDir(''); setEditing(false) }
   const current = selectedFile && prompts[selectedFile]
 
   return <>
     <div className="toolbar">
-      <button onClick={openFolder}>{dirHandle ? '切换文件夹' : '打开文件夹'}</button>
       {dirHandle && <>
-        <button onClick={newPrompt}>+ 新建提示词</button>
-        <button onClick={() => setShowNewFolder(true)}>📁 新建文件夹</button>
-        <button onClick={refresh}>刷新</button>
+        <span className="folder-name">{dirHandle.name}</span>
+        <div className="toolbar-tags">{allTags.map(t =>
+          <span key={t} className={`tag-chip${activeTags.has(t) ? ' active' : ''}`} onClick={() => toggleTag(t)}>{t}</span>
+        )}</div>
       </>}
-      <span className="folder-name">{dirHandle?.name || '未选择文件夹'}</span>
+      {dirHandle && <button className="btn-switch" onClick={openFolder}>切换</button>}
     </div>
     <div className="main">
       {dirHandle && <div className="sidebar">
-        {allTags.length > 0 && <div className="sidebar-section">
-          <h3>标签筛选</h3>
-          <div className="tag-filters">{allTags.map(t =>
-            <span key={t} className={`tag-chip${activeTags.has(t) ? ' active' : ''}`} onClick={() => toggleTag(t)}>{t}</span>
-          )}</div>
-        </div>}
-        <div className="tree">
+        <div className="sidebar-actions">
+          <button className="btn-primary" onClick={newPrompt}>+ 提示词</button>
+          <button className="btn-secondary" onClick={() => setShowNewFolder(true)}>+ 文件夹</button>
+        </div>
+        <div className="tree" onDragOver={(e) => e.preventDefault()} onDrop={handleRootDrop}>
           {tree.map(n => <TreeNode key={n.path} node={n} depth={0} selectedDir={selectedDir} selectedFile={selectedFile}
-            onSelectDir={selectDir} onSelectFile={selectFile} openDirs={openDirs} toggleDir={toggleDir} />)}
+            onSelectDir={setSelectedDir} onSelectFile={selectFile}
+            openDirs={openDirs} toggleDir={toggleDir} onDragStart={setDragNode} onDrop={handleDrop} dragOver={dragOver} />)}
         </div>
         {showNewFolder && <NewFolderInput onConfirm={confirmNewFolder} onCancel={() => setShowNewFolder(false)} />}
       </div>}
       <div className="content">
-        {!dirHandle && <div className="empty"><span>点击「打开文件夹」选择提示词目录</span></div>}
+        {!dirHandle && <div className="empty">
+          <div className="welcome-card">
+            <h2>提示词管理器</h2>
+            <p>选择一个本地文件夹来管理你的提示词</p>
+            <button className="btn-primary" onClick={openFolder}>选择文件夹</button>
+          </div>
+        </div>}
         {dirHandle && !current && <div className="prompt-list">
-          {filtered.length === 0 && <div className="empty-hint">暂无提示词，点击「+ 新建提示词」创建</div>}
+          {filtered.length === 0 && <div className="empty-hint">暂无提示词</div>}
           {filtered.map(p => <div key={p.id} className="prompt-card" onClick={() => selectFile(p.id)}>
             <h4>{p.name}</h4>
             <div className="tags">{(p.tags || []).map(t => <span key={t} className="tag">{t}</span>)}</div>

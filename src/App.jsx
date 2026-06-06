@@ -144,7 +144,7 @@ function PromptView({ prompt, onEdit }) {
   const copyAll = () => { navigator.clipboard.writeText(content); setCopied(true); setTimeout(() => setCopied(false), 1200) }
   return <div className="prompt-view">
     <div className="view-header">
-      <div className="view-title-col">
+      <div className="view-title-row">
         <h2>{prompt.name}</h2>
         {(prompt.tags || []).length > 0 && <div className="view-tags">{prompt.tags.map(t => <span key={t} className="tag">{t}</span>)}</div>}
       </div>

@@ -324,10 +324,6 @@ export default function App() {
   return <>
     <div className="main">
       {dirHandle && <div className="sidebar">
-        <div className="sidebar-top">
-          <span className="sidebar-folder">{dirHandle.name}</span>
-          <button className="btn-switch" onClick={openFolder}>切换</button>
-        </div>
         {allTags.length > 0 && <div className="sidebar-tags">{allTags.map(t =>
           <span key={t} className={`tag-chip${activeTags.has(t) ? ' active' : ''}`} onClick={() => toggleTag(t)}>{t}</span>
         )}</div>}

@@ -1,0 +1,54 @@
+# 工作流名称
+name: Deploy Vite site to Pages
+
+# 触发条件：当推送到 main 分支时自动执行
+on:
+  push:
+    branches: ["main"]
+
+# 赋予 GitHub Actions 部署所需的权限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 确保同一时间只有一个部署在运行
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  # 部署任务
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm' # 缓存 npm 依赖，加快后续构建速度
+
+      - name: Install dependencies
+        run: npm ci # 使用 npm ci 比 npm install 更稳定
+
+      - name: Build project
+        run: npm run build # 运行 Vite 打包命令
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # 上传打包后的 dist 文件夹（Vite 默认的输出目录）
+          path: './dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

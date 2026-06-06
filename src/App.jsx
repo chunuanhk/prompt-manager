@@ -136,14 +136,33 @@ function TagInput({ tags, onChange }) {
 // 提示词展示视图（只读）
 function PromptView({ prompt, onEdit }) {
   const [lang, setLang] = useState('zh')
+  const [selectedLine, setSelectedLine] = useState(null)
+  const [wrap, setWrap] = useState(true)
+  const [copied, setCopied] = useState(false)
+  const content = prompt[lang] || ''
+  const lines = content.split('\n')
+  const copyAll = () => { navigator.clipboard.writeText(content); setCopied(true); setTimeout(() => setCopied(false), 1200) }
   return <div className="prompt-view">
-    <div className="view-header"><h2>{prompt.name}</h2><button className="btn-primary" onClick={onEdit}>编辑</button></div>
-    {(prompt.tags || []).length > 0 && <div className="view-tags">{prompt.tags.map(t => <span key={t} className="tag">{t}</span>)}</div>}
-    <div className="lang-tabs">
-      <div className={`lang-tab${lang === 'zh' ? ' active' : ''}`} onClick={() => setLang('zh')}>中文版本</div>
-      <div className={`lang-tab${lang === 'en' ? ' active' : ''}`} onClick={() => setLang('en')}>English</div>
+    <div className="view-header">
+      <div className="view-title-row">
+        <h2>{prompt.name}</h2>
+        {(prompt.tags || []).length > 0 && <div className="view-tags">{prompt.tags.map(t => <span key={t} className="tag">{t}</span>)}</div>}
+      </div>
+      <button className="btn-primary" onClick={onEdit}>编辑</button>
     </div>
-    <div className="view-content">{prompt[lang] || <span className="empty-text">暂无内容</span>}</div>
+    <div className="lang-tabs">
+      <div className={`lang-tab${lang === 'zh' ? ' active' : ''}`} onClick={() => { setLang('zh'); setSelectedLine(null) }}>中文版本</div>
+      <div className={`lang-tab${lang === 'en' ? ' active' : ''}`} onClick={() => { setLang('en'); setSelectedLine(null) }}>English</div>
+    </div>
+    {content ? <>
+      <div className="content-toolbar">
+        <button className="icon-btn" onClick={copyAll} title="复制">{copied ? '✓' : '⧉'} {copied ? '已复制' : '复制'}</button>
+        <button className="icon-btn" onClick={() => setWrap(!wrap)} title={wrap ? '水平滚动' : '自动换行'}>{wrap ? '⇔ 滚动' : '↩ 换行'}</button>
+      </div>
+      <div className={`view-content${wrap ? '' : ' no-wrap'}`}>
+        {lines.map((line, i) => <div key={i} className={`content-line${selectedLine === i ? ' active' : ''}`} onClick={() => setSelectedLine(i === selectedLine ? null : i)}>{line || '\u00A0'}</div>)}
+      </div>
+    </> : <div className="view-content"><span className="empty-text">暂无内容</span></div>}
     {prompt.note && <div className="view-note"><label>备注</label><p>{prompt.note}</p></div>}
   </div>
 }
@@ -303,17 +322,15 @@ export default function App() {
   const current = selectedFile && prompts[selectedFile]
 
   return <>
-    <div className="toolbar">
-      {dirHandle && <>
-        <span className="folder-name">{dirHandle.name}</span>
-        <div className="toolbar-tags">{allTags.map(t =>
-          <span key={t} className={`tag-chip${activeTags.has(t) ? ' active' : ''}`} onClick={() => toggleTag(t)}>{t}</span>
-        )}</div>
-      </>}
-      {dirHandle && <button className="btn-switch" onClick={openFolder}>切换</button>}
-    </div>
     <div className="main">
       {dirHandle && <div className="sidebar">
+        <div className="sidebar-top">
+          <span className="sidebar-folder">{dirHandle.name}</span>
+          <button className="btn-switch" onClick={openFolder}>切换</button>
+        </div>
+        {allTags.length > 0 && <div className="sidebar-tags">{allTags.map(t =>
+          <span key={t} className={`tag-chip${activeTags.has(t) ? ' active' : ''}`} onClick={() => toggleTag(t)}>{t}</span>
+        )}</div>}
         <div className="sidebar-actions">
           <button className="btn-primary" onClick={newPrompt}>+ 提示词</button>
           <button className="btn-secondary" onClick={() => setShowNewFolder(true)}>+ 文件夹</button>

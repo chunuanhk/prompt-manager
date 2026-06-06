@@ -144,25 +144,25 @@ function PromptView({ prompt, onEdit }) {
   const copyAll = () => { navigator.clipboard.writeText(content); setCopied(true); setTimeout(() => setCopied(false), 1200) }
   return <div className="prompt-view">
     <div className="view-header">
-      <div className="view-title-row">
+      <div className="view-title-col">
         <h2>{prompt.name}</h2>
         {(prompt.tags || []).length > 0 && <div className="view-tags">{prompt.tags.map(t => <span key={t} className="tag">{t}</span>)}</div>}
       </div>
       <button className="btn-primary" onClick={onEdit}>编辑</button>
     </div>
-    <div className="lang-tabs">
-      <div className={`lang-tab${lang === 'zh' ? ' active' : ''}`} onClick={() => { setLang('zh'); setSelectedLine(null) }}>中文版本</div>
-      <div className={`lang-tab${lang === 'en' ? ' active' : ''}`} onClick={() => { setLang('en'); setSelectedLine(null) }}>English</div>
+    <div className="lang-bar">
+      <div className="lang-tabs">
+        <div className={`lang-tab${lang === 'zh' ? ' active' : ''}`} onClick={() => { setLang('zh'); setSelectedLine(null) }}>中文版本</div>
+        <div className={`lang-tab${lang === 'en' ? ' active' : ''}`} onClick={() => { setLang('en'); setSelectedLine(null) }}>English</div>
+      </div>
+      {content && <div className="content-toolbar">
+        <button className="icon-btn" onClick={copyAll}>{copied ? '✓ 已复制' : '⧉ 复制'}</button>
+        <button className="icon-btn" onClick={() => setWrap(!wrap)}>{wrap ? '⇔ 滚动' : '↩ 换行'}</button>
+      </div>}
     </div>
-    {content ? <>
-      <div className="content-toolbar">
-        <button className="icon-btn" onClick={copyAll} title="复制">{copied ? '✓' : '⧉'} {copied ? '已复制' : '复制'}</button>
-        <button className="icon-btn" onClick={() => setWrap(!wrap)} title={wrap ? '水平滚动' : '自动换行'}>{wrap ? '⇔ 滚动' : '↩ 换行'}</button>
-      </div>
-      <div className={`view-content${wrap ? '' : ' no-wrap'}`}>
-        {lines.map((line, i) => <div key={i} className={`content-line${selectedLine === i ? ' active' : ''}`} onClick={() => setSelectedLine(i === selectedLine ? null : i)}>{line || '\u00A0'}</div>)}
-      </div>
-    </> : <div className="view-content"><span className="empty-text">暂无内容</span></div>}
+    {content ? <div className={`view-content${wrap ? '' : ' no-wrap'}`}>
+      {lines.map((line, i) => <div key={i} className={`content-line${selectedLine === i ? ' active' : ''}`} onClick={() => setSelectedLine(i === selectedLine ? null : i)}>{line || '\u00A0'}</div>)}
+    </div> : <div className="view-content"><span className="empty-text">暂无内容</span></div>}
     {prompt.note && <div className="view-note"><label>备注</label><p>{prompt.note}</p></div>}
   </div>
 }
